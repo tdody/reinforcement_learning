@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 import matplotlib.pyplot as plt
@@ -56,13 +55,19 @@ class OneArmedBandit:
         return f"OneArmedBandit(mu={self.mu:.2f}, sigma={self.sigma:.2f}, n={self.n}, q={self.q:.2f})"
 
     @classmethod
-    def random(cls, optimist_initial_value: float = 0) -> "OneArmedBandit":
+    def random_bandit(
+        cls, optimist_initial_value: float = 0, random_seed: Optional[int] = None
+    ) -> "OneArmedBandit":
         """
         Create a random one-arm bandit by sampling mu from N(0, 1) setting sigma = 1.0.
 
         Returns:
             OneArmedBandit: A random one-arm bandit.
         """
+        if random_seed is not None:
+            np.random.seed(random_seed)
+        else:
+            np.random.seed()
         mu = np.random.normal(0, 1)
         sigma = 1.0
         return cls(mu, sigma, optimist_initial_value)
@@ -78,7 +83,9 @@ class KArmedBanditExperiment:
         """
 
         self.k = k
-        self.bandits = [OneArmedBandit.random(optimist_initial_value) for _ in range(k)]
+        self.bandits = [
+            OneArmedBandit.random_bandit(optimist_initial_value) for _ in range(k)
+        ]
         self.optimist_initial_value = optimist_initial_value
 
     def reset_bandits(self) -> None:
@@ -109,7 +116,7 @@ class KArmedBanditExperiment:
         """
         return np.random.choice(self.bandits)
 
-    def __epsilon_greedy(self, epsilon: float) -> tuple[float, bool]:
+    def epsilon_greedy(self, epsilon: float) -> tuple[float, bool]:
         """
         Choose a bandit using epsilon-greedy strategy.
 
@@ -143,36 +150,67 @@ def is_optimal(bandits: list[OneArmedBandit], selected_bandit: OneArmedBandit) -
     return selected_bandit.mu == max(b.mu for b in bandits)
 
 
-@dataclass
 class ExperimentResult:
     epsilon: float
     """Epsilon value used in the experiment."""
     average_rewards: list[float]
-    """Average rewards received across all simulations at a given action."""
+    """Average rewards received across all simulations at a given action.
+    average_rewards[i] = average reward at action i across all (n) experiments.
+    """
     optimal_action_pct: list[float]
-    """Percentage of optimal actions taken."""
-    n: int = 0
+    """Percentage of optimal actions taken.
+    optimal_action_pct[i] = percentage of optimal actions taken at action i across all (n) experiments.
+    """
+    n_experiments: int = 0
     """Number of times the experiment has been run."""
+
+    def __init__(self, epsilon: float, n_actions: int):
+        self.epsilon = epsilon
+        self.average_rewards = []
+        self.optimal_action_pct = []
+        self.n_experiments = 0
+        self.n_actions = n_actions
 
     def update(self, action_rewards: list[float], optimal_actions: list[bool]) -> None:
         """
         Update the average rewards and optimal action percentage.
 
         Args:
-            action_rewards (list[float]): List of rewards received across all simulations at a given action.
-            optimal_actions (list[bool]): List of booleans indicating whether the action was optimal or not.
+            action_rewards (list[float]): List of length (n) containing the rewards received across a single experiment.
+            optimal_actions (list[bool]): List of length (n) containing the booleans indicating whether an action was optimal or not.
 
         Returns:
             None
         """
-        if self.average_rewards is None:
-            self.average_rewards = []
-        if self.optimal_action_pct is None:
-            self.optimal_action_pct = []
+        if self.n_actions != len(action_rewards):
+            raise ValueError(
+                f"action_rewards must be of length {self.n_actions}, but got {len(action_rewards)}"
+            )
+        if self.n_actions != len(optimal_actions):
+            raise ValueError(
+                f"optimal_actions must be of length {self.n_actions}, but got {len(optimal_actions)}"
+            )
+        if self.n_experiments == 0:
+            # Initialize the average rewards and optimal action percentage
+            self.average_rewards = [0] * self.n_actions
+            self.optimal_action_pct = [0] * self.n_actions
 
-        self.n += 1
-        self.average_rewards.append(np.mean(action_rewards))
-        self.optimal_action_pct.append(np.mean(optimal_actions))
+        self.average_rewards = [
+            (self.average_rewards[i] * self.n_experiments) + action_rewards[i]
+            for i in range(self.n_actions)
+        ]
+        self.optimal_action_pct = [
+            (self.optimal_action_pct[i] * self.n_experiments) + optimal_actions[i]
+            for i in range(self.n_actions)
+        ]
+        # Update the number of experiments
+        self.n_experiments += 1
+
+        # Normalize the average rewards and optimal action percentage
+        self.average_rewards = [x / self.n_experiments for x in self.average_rewards]
+        self.optimal_action_pct = [
+            x / self.n_experiments for x in self.optimal_action_pct
+        ]
 
 
 def run_experiments(
@@ -180,7 +218,7 @@ def run_experiments(
     epsilons: list[float],
     n_actions: int,
     n_experiments: int,
-) -> list[ExperimentResult]:
+) -> dict[float, ExperimentResult]:
     """
     Run an experiment with a list of bandits using epsilon-greedy strategy.
 
@@ -194,24 +232,24 @@ def run_experiments(
         list[ExperimentResult]: A list of ExperimentResult objects containing the
         epsilon value, average rewards, and optimal action percentage.
     """
-    results = [ExperimentResult(epsilon, [], [], 0) for epsilon in epsilons]
+    results = {epsilon: ExperimentResult(epsilon, [], [], 0) for epsilon in epsilons}
 
-    for epslion in epsilons:
+    for epsilon in epsilons:
         for _ in range(n_experiments):
+            step_rewards: list[float] = []
+            optimal_actions: list[bool] = []
             # reset the bandits for each experiment
             k_armed_bandit.reset_bandits()
 
-    # for experiment_idx in range(n_experiments):
-    #     # reset the bandits for each experiment
-    #     for bandit in bandits:
-    #         bandit.n = 0
-    #         bandit.q = 0.0
-    #     for eps in epsilons:
-    #         for _ in range(n_actions):
-    #             step_reward = epsilon_greedy(bandits, eps)
-    #             rewards[experiment_idx][eps].append(step_reward)
+            for _ in range(n_actions):
+                step_reward, is_optimal = k_armed_bandit.epsilon_greedy(epsilon)
+                step_rewards.append(step_reward)
+                optimal_actions.append(is_optimal)
 
-    # return rewards
+            # update the average rewards and optimal action percentage
+            results[epsilon].update(step_rewards, optimal_actions)
+
+    return results
 
 
 def plot_average_rewards(

@@ -5,7 +5,13 @@ import seaborn as sns
 
 
 class OneArmedBandit:
-    def __init__(self, mu: float, sigma: float, optimist_initial_value: float = 0):
+    def __init__(
+        self,
+        mu: float,
+        sigma: float,
+        optimist_initial_value: float = 0,
+        learning_rate: Optional[float] = None,
+    ):
         """
         Initialize the one-arm bandit with a given probability of success.
 
@@ -19,10 +25,11 @@ class OneArmedBandit:
         self.n = 0
 
         self.q = optimist_initial_value
+        self.learning_rate = learning_rate
 
-    def pull(self, alpha: Optional[float] = None) -> float:
+    def pull(self) -> float:
         """
-        Simulate pulling the arm of the bandit.
+        Simulate pulling the arm of the bandit and update the estimated value of the bandit based on the observed reward.
 
         Args:
             alpha (float): Learning rate for updating the estimated value of the bandit.
@@ -38,8 +45,10 @@ class OneArmedBandit:
         self.n += 1
 
         # If alpha is None, set it to 1/n
-        if alpha is None:
+        if self.learning_rate is None:
             alpha = 1 / self.n
+        else:
+            alpha = self.learning_rate
 
         # Update the estimated value of the bandit using incremental mean formula
         self.q = self.q + (reward - self.q) * alpha
@@ -52,11 +61,14 @@ class OneArmedBandit:
         Returns:
             str: String representation of the OneArmedBandit.
         """
-        return f"OneArmedBandit(mu={self.mu:.2f}, sigma={self.sigma:.2f}, n={self.n}, q={self.q:.2f})"
+        return f"OneArmedBandit(mu={self.mu:.2f}, sigma={self.sigma:.2f}, n={self.n}, q={self.q:.2f}, learning_rate={self.learning_rate})"
 
     @classmethod
     def random_bandit(
-        cls, optimist_initial_value: float = 0, random_seed: Optional[int] = None
+        cls,
+        optimist_initial_value: float = 0,
+        random_seed: Optional[int] = None,
+        learning_rate: Optional[float] = None,
     ) -> "OneArmedBandit":
         """
         Create a random one-arm bandit by sampling mu from N(0, 1) setting sigma = 1.0.
@@ -70,23 +82,41 @@ class OneArmedBandit:
             np.random.seed()
         mu = np.random.normal(0, 1)
         sigma = 1.0
-        return cls(mu, sigma, optimist_initial_value)
+        return cls(mu, sigma, optimist_initial_value, learning_rate)
 
 
 class KArmedBanditExperiment:
-    def __init__(self, k: int, optimist_initial_value: float = 0):
+    def __init__(
+        self,
+        k: int,
+        epsilon: float,
+        optimist_initial_value: float = 0,
+        learning_rate: Optional[float] = None,
+        random_seed: Optional[int] = None,
+    ):
         """
         Initialize the K-armed bandit experiment with a given number of arms.
         Args:
-            k (int): Number of arms.
+            k (int): Number of armed bandits.
+            epsilon (float): Probability of exploring.
             optimist_initial_value (float): Initial value of the bandit.
+            learning_rate (float): Learning rate for updating the estimated value of the bandit.
+            random_seed (int): Random seed for reproducibility.
         """
 
         self.k = k
         self.bandits = [
-            OneArmedBandit.random_bandit(optimist_initial_value) for _ in range(k)
+            OneArmedBandit.random_bandit(
+                optimist_initial_value,
+                learning_rate=learning_rate,
+                random_seed=random_seed,
+            )
+            for _ in range(k)
         ]
         self.optimist_initial_value = optimist_initial_value
+        self.learning_rate = learning_rate
+        self.epsilon = epsilon
+        self.random_seed = random_seed
 
     def reset_bandits(self) -> None:
         """
@@ -116,19 +146,17 @@ class KArmedBanditExperiment:
         """
         return np.random.choice(self.bandits)
 
-    def epsilon_greedy(self, epsilon: float) -> tuple[float, bool]:
+    def epsilon_greedy(self) -> tuple[float, bool]:
         """
         Choose a bandit using epsilon-greedy strategy.
 
-        Args:
-            epsilon (float): Probability of exploring.
 
         Returns:
             OneArmedBandit: The chosen bandit.
             boolean: True if the selected bandit is optimal, False otherwise.
         """
         selected_bandit: OneArmedBandit
-        if np.random.rand() < epsilon:
+        if np.random.rand() < self.epsilon:
             selected_bandit = self.__explore()
         else:
             selected_bandit = self.__exploit()
@@ -214,35 +242,46 @@ class ExperimentResult:
 
 
 def run_experiments(
-    k_armed_bandit: KArmedBanditExperiment,
+    k: int,
     epsilons: list[float],
     n_actions: int,
     n_experiments: int,
+    optimist_initial_value: float = 0,
+    learning_rate: Optional[float] = None,
+    random_seed: Optional[int] = None,
 ) -> dict[float, ExperimentResult]:
     """
     Run an experiment with a list of bandits using epsilon-greedy strategy.
 
     Args:
-        k_armed_bandit (KArmedBanditExperiment): The K-armed bandit experiment.
+        k (int): Number of bandits.
         epsilons (list[float]): List of epsilon values for exploration.
         n_actions (int): Number of times to pull the bandit.
         n_experiments (int): Number of time we repeat teh experiment.
+        optimist_initial_value (float): Initial value of the bandit.
+        learning_rate (float): Learning rate for updating the estimated value of the bandit.
+        random_seed (int): Random seed for reproducibility.
 
     Returns:
         list[ExperimentResult]: A list of ExperimentResult objects containing the
         epsilon value, average rewards, and optimal action percentage.
     """
-    results = {epsilon: ExperimentResult(epsilon, [], [], 0) for epsilon in epsilons}
+    results = {epsilon: ExperimentResult(epsilon, n_actions) for epsilon in epsilons}
 
     for epsilon in epsilons:
         for _ in range(n_experiments):
+            experiment = KArmedBanditExperiment(
+                k,
+                epsilon,
+                optimist_initial_value,
+                learning_rate,
+                random_seed=random_seed,
+            )
             step_rewards: list[float] = []
             optimal_actions: list[bool] = []
-            # reset the bandits for each experiment
-            k_armed_bandit.reset_bandits()
 
             for _ in range(n_actions):
-                step_reward, is_optimal = k_armed_bandit.epsilon_greedy(epsilon)
+                step_reward, is_optimal = experiment.epsilon_greedy()
                 step_rewards.append(step_reward)
                 optimal_actions.append(is_optimal)
 
@@ -253,39 +292,73 @@ def run_experiments(
 
 
 def plot_average_rewards(
-    rewards: list[dict[float, list[float]]], epsilons: list[float]
+    rewards: dict[float, ExperimentResult], ax: Optional[plt.Axes] = None
 ) -> None:
     """
     Plot the average rewards for each epsilon value.
 
     Args:
         rewards (list[dict[float, list[float]]]): A list of dictionaries where each
-        dictionary contains the epsilon value as the key and a list of rewards as the value.
-        epsilons (list[float]): List of epsilon values for exploration.
 
     Returns:
         None
     """
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        ax.clear()
+
     sns.set(style="white")
-    for eps in epsilons:
-        avg_rewards = np.mean([r[eps] for r in rewards], axis=0)
-        plt.plot(avg_rewards, label=f"epsilon={eps}")
-
+    for eps in rewards:
+        ax.plot(
+            rewards[eps].average_rewards,
+            label=f"$\epsilon$={eps}",
+        )
+    ax.set_xlabel("Steps")
+    ax.set_ylabel("Average Reward")
     n_experiments = len(rewards)
+    ax.set_title(
+        f"Epsilon-Greedy Strategy - Average Reward for {n_experiments} experiments"
+    )
+    ax.legend()
 
-    plt.xlabel("Steps")
-    plt.ylabel(f"Average Reward for {n_experiments} experiments")
-    plt.title("Epsilon-Greedy Strategy")
-    plt.legend()
-    plt.show()
-
-
-def main():
-    # Create a list of bandits
-    bandits = [OneArmedBandit.random() for _ in range(10)]
-    # Run the experiment with epsilon-greedy strategy
-    run_experiment(bandits, epsilons=[0.0, 0.01, 0.1], n=1000)
+    if ax is None:
+        plt.show()
 
 
-if __name__ == "__main__":
-    main()
+def plot_optimal_action_pct(
+    rewards: dict[float, ExperimentResult],
+    ax: Optional[plt.Axes] = None,
+) -> None:
+    """
+    Plot the optimal action percentage for each epsilon value.
+
+    Args:
+        rewards (list[dict[float, list[float]]]): A list of dictionaries where each
+        dictionary contains the average rewards and optimal action percentage for a given epsilon value.
+
+    Returns:
+        None
+    """
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        ax.clear()
+
+    sns.set(style="white")
+    for eps in rewards:
+        ax.plot(
+            rewards[eps].optimal_action_pct,
+            label=f"$\epsilon$={eps}",
+        )
+    ax.set_xlabel("Steps")
+    ax.set_ylabel("Optimal Action Percentage")
+    ax.set_title("Epsilon-Greedy Strategy - Optimal Action Percentage")
+    # format the y-axis as a percentage
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.0%}"))
+    ax.set_ylim(0, 1)
+    ax.legend()
+
+    if ax is None:
+        plt.show()

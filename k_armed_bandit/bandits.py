@@ -191,6 +191,8 @@ class ExperimentResult:
     """
     n_experiments: int = 0
     """Number of times the experiment has been run."""
+    estimated_mus: dict[int, dict[str, float]]
+    """Estimated mus for each bandit."""
 
     def __init__(self, epsilon: float, n_actions: int):
         self.epsilon = epsilon
@@ -198,8 +200,14 @@ class ExperimentResult:
         self.optimal_action_pct = []
         self.n_experiments = 0
         self.n_actions = n_actions
+        self.estimated_mus = {}
 
-    def update(self, action_rewards: list[float], optimal_actions: list[bool]) -> None:
+    def update(
+        self,
+        action_rewards: list[float],
+        optimal_actions: list[bool],
+        bandits: list[OneArmedBandit],
+    ) -> None:
         """
         Update the average rewards and optimal action percentage.
 
@@ -234,11 +242,17 @@ class ExperimentResult:
         # Update the number of experiments
         self.n_experiments += 1
 
+        # Update the estimated mus for each bandit
+        for i, bandit in enumerate(bandits):
+            
+
+
         # Normalize the average rewards and optimal action percentage
         self.average_rewards = [x / self.n_experiments for x in self.average_rewards]
         self.optimal_action_pct = [
             x / self.n_experiments for x in self.optimal_action_pct
         ]
+
 
 
 def run_experiments(

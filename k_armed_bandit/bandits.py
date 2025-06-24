@@ -191,8 +191,6 @@ class ExperimentResult:
     """
     n_experiments: int = 0
     """Number of times the experiment has been run."""
-    estimated_mus: dict[int, dict[str, float]]
-    """Estimated mus for each bandit."""
 
     def __init__(self, epsilon: float, n_actions: int):
         self.epsilon = epsilon
@@ -200,13 +198,11 @@ class ExperimentResult:
         self.optimal_action_pct = []
         self.n_experiments = 0
         self.n_actions = n_actions
-        self.estimated_mus = {}
 
     def update(
         self,
         action_rewards: list[float],
         optimal_actions: list[bool],
-        bandits: list[OneArmedBandit],
     ) -> None:
         """
         Update the average rewards and optimal action percentage.
@@ -239,20 +235,15 @@ class ExperimentResult:
             (self.optimal_action_pct[i] * self.n_experiments) + optimal_actions[i]
             for i in range(self.n_actions)
         ]
+
         # Update the number of experiments
         self.n_experiments += 1
-
-        # Update the estimated mus for each bandit
-        for i, bandit in enumerate(bandits):
-            
-
 
         # Normalize the average rewards and optimal action percentage
         self.average_rewards = [x / self.n_experiments for x in self.average_rewards]
         self.optimal_action_pct = [
             x / self.n_experiments for x in self.optimal_action_pct
         ]
-
 
 
 def run_experiments(
@@ -305,6 +296,50 @@ def run_experiments(
     return results
 
 
+def run_single_experiment(
+    k: int,
+    epsilon: float,
+    n_actions: int,
+    optimist_initial_value: float = 0,
+    learning_rate: Optional[float] = None,
+    random_seed: Optional[int] = None,
+) -> tuple[ExperimentResult, list[OneArmedBandit]]:
+    """
+    Run a single experiment with a list of bandits using epsilon-greedy strategy.
+    Args:
+        k (int): Number of bandits.
+        epsilon (float): Epsilon value for exploration.
+        n_actions (int): Number of times to pull the bandit.
+        optimist_initial_value (float): Initial value of the bandit.
+        learning_rate (float): Learning rate for updating the estimated value of the bandit.
+        random_seed (int): Random seed for reproducibility.
+    Returns:
+        tuple[ExperimentResult, list[OneArmedBandit]]: A tuple containing the ExperimentResult object
+        and a list of OneArmedBandit objects.
+    """
+
+    experiment = KArmedBanditExperiment(
+        k,
+        epsilon,
+        optimist_initial_value,
+        learning_rate,
+        random_seed=random_seed,
+    )
+    step_rewards: list[float] = []
+    optimal_actions: list[bool] = []
+
+    for _ in range(n_actions):
+        step_reward, is_optimal = experiment.epsilon_greedy()
+        step_rewards.append(step_reward)
+        optimal_actions.append(is_optimal)
+
+    # update the average rewards and optimal action percentage
+    result = ExperimentResult(epsilon, n_actions)
+    result.update(step_rewards, optimal_actions)
+
+    return result, experiment.bandits
+
+
 def plot_average_rewards(
     rewards: dict[float, ExperimentResult], ax: Optional[plt.Axes] = None
 ) -> None:
@@ -324,17 +359,17 @@ def plot_average_rewards(
         ax.clear()
 
     sns.set(style="white")
+    n_experiments = 0
     for eps in rewards:
         ax.plot(
             rewards[eps].average_rewards,
             label=f"$\epsilon$={eps}",
         )
+        n_experiments = rewards[eps].n_experiments
     ax.set_xlabel("Steps")
     ax.set_ylabel("Average Reward")
-    n_experiments = len(rewards)
-    ax.set_title(
-        f"Epsilon-Greedy Strategy - Average Reward for {n_experiments} experiments"
-    )
+
+    ax.set_title(f"Average Reward for {n_experiments} experiments")
     ax.legend()
 
     if ax is None:
@@ -361,14 +396,16 @@ def plot_optimal_action_pct(
         ax.clear()
 
     sns.set(style="white")
+    n_experiments = 0
     for eps in rewards:
         ax.plot(
             rewards[eps].optimal_action_pct,
             label=f"$\epsilon$={eps}",
         )
+        n_experiments = rewards[eps].n_experiments
     ax.set_xlabel("Steps")
     ax.set_ylabel("Optimal Action Percentage")
-    ax.set_title("Epsilon-Greedy Strategy - Optimal Action Percentage")
+    ax.set_title(f"Optimal Action Percentage for {n_experiments} experiments")
     # format the y-axis as a percentage
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.0%}"))
     ax.set_ylim(0, 1)
